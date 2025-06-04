@@ -1,0 +1,12 @@
+[package]
+name = "wrk17"
+version = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+bincode = {workspace = true}
+rand = {workspace = true}
+rand_chacha = { workspace = true }
+blake3 = { workspace = true , features = ["traits-preview"] }
+curve25519-dalek-ng = { workspace = true }
+serde = { workspace = true,  features = ["derive"] }

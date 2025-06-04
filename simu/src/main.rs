@@ -1,7 +1,6 @@
 //! SMPC engine simulation environment under ideal functionality
-use delbrag::{Circuit, Error, Gate, simulate};
-
-fn and(iterations: u32) -> Result<(), Error> {
+use wrk17::{Circuit, Error, Gate, simulate};
+fn and(iterations: u64) -> Result<(), Error> {
     let mut gates = vec![Gate::InContrib];
     let output_gates = vec![iterations * 2];
     for i in 0..iterations {
@@ -20,7 +19,7 @@ fn and(iterations: u32) -> Result<(), Error> {
     Ok(())
 }
 
-fn xor(iterations: u32) -> Result<(), Error> {
+fn xor(iterations: u64) -> Result<(), Error> {
     let mut gates = vec![Gate::InContrib];
     let output_gates = vec![iterations * 2];
     for i in 0..iterations {

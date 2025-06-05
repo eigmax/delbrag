@@ -6,40 +6,37 @@ edition = "2024"
 members = [
     "wrk17",
     "simu", "algebra",
+    "protocol",
 ]
 resolver = "2"
-default-members = ["wrk17", "simu"]
+default-members = ["wrk17", "protocol", "algebra"]
 
 [workspace.dependencies]
 bitvm = { git = "https://github.com/BitVM/BitVM", rev = "79eccd9" }
 bitcoin-script = { git = "https://github.com/BitVM/rust-bitcoin-script", rev="519088c7" }
 bitcoin = { version = "0.32.5", features = ["rand-std"] }
 bitcoin_hashes = "0.16.0"
+serde = { version = "1.0.197", features = ["derive"] }
 bitcoin-script-stack = { git = "https://github.com/BitVM/rust-bitcoin-script-stack", rev="643c5f1a" }
 hex = "0.4.3"
-clap = { version = "4.5.23", features = ["derive", "cargo", "env"] }
-itertools = "0.14.0"
 secp256k1 = { version = "0.29.1", features = ["global-context"] }
-indicatif = "0.17.11"
 anyhow = "1.0.98"
-bitcoincore-rpc = "0.19.0"
 serde_json = "1.0"
+
+musig2 = { version = "0.2.4", features = ["serde", "rand", "k256"]}
 
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 blake3 = { version = "1.5.1", features = ["traits-preview"] }
 curve25519-dalek-ng = "4.1.1"
-serde = "1.0"
 bincode = "1.3"
 
 wrk17 = { path = "./wrk17" }
+protocol = { path = "./protocol" }
+algebra = { path = "./algebra" }
 
 [profile.dev]
 opt-level = 3
 
 [profile.release]
 lto = true
-
-#[bin]
-#path = "./bin/main.rs"
-#name = "delbrag"

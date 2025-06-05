@@ -1,0 +1,13 @@
+[package]
+name = "protocol"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bitcoin = { workspace = true,  features = ["rand-std"] }
+musig2 = { workspace = true, features = ["serde", "rand", "k256"] }
+anyhow = { workspace = true }
+secp256k1 = { workspace = true, features = ["global-context", "serde"] }
+serde_json = { workspace = true }
+serde = { workspace = true }
+rand = { workspace = true }

@@ -7,6 +7,7 @@ mod bigint;
 mod biguint;
 mod bitwise;
 mod bn254;
+mod koalabear;
 mod u32;
 
 pub use bigint::BigInt;

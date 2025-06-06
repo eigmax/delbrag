@@ -619,7 +619,7 @@ mod tests {
                 continue;
             }
             let (q, r) = dividend.div_mod(&divisor);
-            println!("{:?} * {:?} + {:?} - {:?}", q, divisor, r, dividend);
+            //println!("{:?} * {:?} + {:?} - {:?}", q, divisor, r, dividend);
             let result = q * divisor + r - dividend;
             assert!(result.is_zero());
         }
@@ -631,7 +631,7 @@ mod tests {
         assert_eq!(z.bits(), 0);
         // All bit positions should be false
         for i in 0..5 {
-            assert!(!z.bit(i), "zero.bit({}) should be false", i);
+            assert!(!z.bit(i), "zero.bit({i}) should be false");
         }
     }
 
@@ -671,7 +671,7 @@ mod tests {
 
         // Check some unset bits around:
         for &i in &[0, 1, 4, 6, 39, 41, 50] {
-            assert!(!n.bit(i), "bit {} should be unset", i);
+            assert!(!n.bit(i), "bit {i} should be unset");
         }
     }
 
@@ -681,7 +681,7 @@ mod tests {
         let m = BigUint::from(31u32);
         assert_eq!(m.bits(), 5);
         for i in 0..5 {
-            assert!(m.bit(i), "bit {} should be 1", i);
+            assert!(m.bit(i), "bit {i} should be 1");
         }
         assert!(!m.bit(5));
     }
@@ -817,21 +817,18 @@ mod tests {
     fn test_parse_from_str() {
         let str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
         let a = BigUint::from_str(str).unwrap();
-        println!("{}", a.to_string());
         assert_eq!(str, a.to_string().as_str());
 
         let a = BigUint::from_str(
             "21888242871839275222246405745257275088548364400416034343698204186575808495617",
         )
         .unwrap();
-        println!("{:?}", a.limbs);
         let modulus = BigUint {
             limbs: vec![
                 4026531841, 1138881939, 2042196113, 674490440, 2172737629, 3092268470, 3778125865,
                 811880050,
             ],
         };
-        println!("{:?}", modulus);
         assert_eq!(a, modulus)
     }
 }

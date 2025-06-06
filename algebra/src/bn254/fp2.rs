@@ -74,12 +74,9 @@ mod tests {
         let a = Fp2::new(Fp::new(3u32), Fp::new(4u32));
         let b = Fp2::new(Fp::new(1u32), Fp::new(2u32));
         let res = a.mul(&b);
-        println!("res: {:?}, {}", res, MODULUS.to_string());
         // (3 + 4u)(1 + 2u) = (3*1 - 4*2) + (3*2 + 4*1)u = (-5 + 10u)
-
         let expected = Fp2::new(Fp::from(-5), Fp::new(10u32));
-
-        assert_eq!(a.mul(&b), expected);
+        assert_eq!(res, expected);
     }
 
     #[test]

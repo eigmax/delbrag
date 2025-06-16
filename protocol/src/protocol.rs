@@ -1,4 +1,6 @@
 //! implement debrag script: https://rubin.io/public/pdfs/delbrag-talk-btcpp-austin-2025.pdf
+
+use std::ops::Add;
 use bitcoin::blockdata::opcodes::all::*;
 use bitcoin::blockdata::script::Builder;
 use bitcoin::hashes::{Hash, HashEngine, sha256};
@@ -10,10 +12,14 @@ use bitcoin::taproot::{LeafVersion, TapLeafHash, TaprootBuilder, TaprootSpendInf
 
 use bitcoin_script_stack::optimizer;
 use bitvm::hash::blake3::blake3_compute_script_with_limb;
+use std::str::FromStr;
 
 use anyhow::Result;
-use bitcoin::{Amount, opcodes};
-use secp256k1::Message;
+use bitcoin::{Amount, opcodes, Network, Transaction, Txid, Address, OutPoint, TxIn, Sequence, Witness, TxOut};
+use bitcoin::absolute::LockTime;
+use bitcoin::transaction::Version;
+use secp256k1::{Message, XOnlyPublicKey};
+use crate::utils::inner_from;
 
 /// Helper: combine scripts (by just concatenating the raw bytes).
 fn combine_scripts(fragments: &[ScriptBuf]) -> ScriptBuf {
@@ -49,35 +55,41 @@ fn build_input_script(h_xi_0: &[u8; 32], h_xi_1: &[u8; 32]) -> ScriptBuf {
         .into_script()
 }
 
+
+/// build
 fn build_inputs_script(
     labels: &[([u8; 32], [u8; 32])],
     pk_musig: PublicKey,
-    pk_verifier: PublicKey,
-) -> (ScriptBuf, ScriptBuf) {
+) -> ScriptBuf {
     let commit_inputs = {
         let mut commits = Vec::new();
         for (h_xi_0, h_xi_1) in labels.iter() {
             commits.push(build_input_script(h_xi_0, h_xi_1));
         }
-        // TODO: change to musig2 of prover and verifier
         let siging =
             Builder::new().push_key(&pk_musig.into()).push_opcode(OP_CHECKSIGVERIFY).into_script(); // Assumes both signatures required in leaf context
         commits.push(siging);
         combine_scripts(&commits)
     };
+    commit_inputs
+}
 
-    let t_cltv_value = 10;
-    let timeout_branch = Builder::new()
+/// Build commit-timeout script. Verifier can get all the funds atfer waiting for ${t_cltv_value} blocks if the prover does not publish inputs.
+fn build_commit_timeout_script(
+    pk_verifier: PublicKey,
+    t_cltv_value: i64,
+) -> ScriptBuf {
+    Builder::new()
         .push_int(t_cltv_value) // <T>
         .push_opcode(OP_CLTV)
         .push_opcode(OP_DROP)
         .push_key(&pk_verifier.into()) // <Bob>
         .push_opcode(OP_CHECKSIG)
-        .into_script();
-
-    (commit_inputs, timeout_branch)
+        .into_script()
 }
 
+
+/// Disprove script
 fn build_failgate_script(pk_musig: PublicKey, y0_hash: &[u8; 32]) -> ScriptBuf {
     Builder::new()
         .push_opcode(OP_SHA256)
@@ -88,8 +100,8 @@ fn build_failgate_script(pk_musig: PublicKey, y0_hash: &[u8; 32]) -> ScriptBuf {
         .into_script()
 }
 
+/// Refund after CSV, no asserting or challenge happens
 fn build_refund_script(pk_prover: PublicKey, csv_n: u16) -> ScriptBuf {
-    // Refund after CSV
     Builder::new()
         .push_int(csv_n as i64)
         .push_opcode(OP_CSV)
@@ -108,11 +120,158 @@ pub fn create_sighash_message(locking_script: &ScriptBuf, value: Amount) -> Mess
     Message::from_digest(digest.to_byte_array())
 }
 
-// TODO
-pub fn build_input_commit_tx() {}
+/// Workflow
+///     Alice creates $\phi(X)$ = Y, and sends to Bob
+///     Alice creates output $\delta$, and sends to Bob (include description)
+///     If Alice publish data Q for X, if $\phi(Q) == 0$, Bob can punish.
+///     Or after a delay, Alice can refund
+pub fn build_phi_eval_presigned_tx(
+    pk_musig: PublicKey,
+    pk_prover: PublicKey,
+    y0_hash: &[u8; 32],
+    csv_n: u16,
+    input_txid: Txid,
+    input_vout: u32,
+    receiver: Address,
+    network: Network,
+) -> Result<(Transaction, Address)> {
+    let both_failgate_script = build_failgate_script(pk_musig, y0_hash);
+    let alice_refund_script = build_refund_script(pk_prover, csv_n);
 
-// TODO
-pub fn build_output_commit_tx() {}
+    let secp = secp256k1::Secp256k1::new();
+
+    let mut builder = TaprootBuilder::new()
+        .add_leaf(0, both_failgate_script.clone())?
+        .add_leaf(0, alice_refund_script.clone())?;
+
+    let xonly_pubkey = XOnlyPublicKey::from(pk_musig);
+    let spend_info = builder.finalize(&secp, xonly_pubkey).unwrap();
+
+    let taproot_output_key = spend_info.output_key();
+    let taproot_addr = Address::p2tr_tweaked(taproot_output_key, network);
+    println!("🔐 Taproot script address: {}", taproot_addr);
+
+    let amount_wo_fee = Amount::from_sat(10000);
+    // construct tx
+    let assert_tx = build_spending_tx(input_txid, input_vout, receiver, amount_wo_fee);
+
+    // fill in witness
+
+    Ok((assert_tx, taproot_addr))
+}
+
+pub fn build_input_commit_tx(
+    labels: &[([u8; 32], [u8; 32])],
+    pk_musig: PublicKey,
+    pk_verifier: PublicKey,
+    cltv_value: i64,
+    input_txid: Txid,
+    input_vout: u32,
+    phi_address: Address,
+    network: Network,
+) -> Result<Transaction> {
+    let commit_input_scripts = build_inputs_script(labels, pk_musig);
+    let commit_timeout_script = build_commit_timeout_script(pk_verifier,  cltv_value);
+    //let both_failgate_script = build_failgate_script(pk_musig, y0_hash);
+    //let alice_refund_script = build_refund_script(pk_prover, csv_n);
+
+    let secp = secp256k1::Secp256k1::new();
+
+    let mut builder = TaprootBuilder::new()
+        .add_leaf(0, commit_input_scripts.clone())?
+        .add_leaf(0, commit_timeout_script.clone())?;
+
+    let xonly_pubkey = XOnlyPublicKey::from(pk_musig);
+    let spend_info = builder.finalize(&secp, xonly_pubkey).unwrap();
+
+    let taproot_output_key = spend_info.output_key();
+    let taproot_addr = Address::p2tr_tweaked(taproot_output_key, network);
+    println!("🔐 Taproot script address: {}", taproot_addr);
+
+    let amount_wo_fee = Amount::from_sat(10000);
+    // construct tx
+    let commit_input_tx = build_spending_tx(input_txid, input_vout, phi_address, amount_wo_fee);
+
+    // fill in witness
+
+    Ok(commit_input_tx)
+}
+
+fn build_spending_tx(
+    input_txid: Txid,
+    input_vout: u32,
+    destination: Address,
+    amount_wo_fee_sat: Amount,
+) -> Transaction {
+    let outpoint = OutPoint {
+        txid: input_txid,
+        vout: input_vout,
+    };
+
+    let txin = TxIn {
+        previous_output: outpoint,
+        script_sig: ScriptBuf::new(), // empty for P2WSH
+        sequence: Sequence::from_consensus(0xffffffff),
+        witness: Witness::new(), // to be filled after signing
+    };
+
+    let txout = TxOut {
+        value: amount_wo_fee_sat,
+        script_pubkey: destination.script_pubkey(),
+    };
+
+    Transaction {
+        version: Version::TWO,
+        lock_time: LockTime::ZERO,
+        input: vec![txin],
+        output: vec![txout],
+    }
+}
+
+pub fn build_delbrag_tx(input_txid: Txid, input_vout: u32, network: Network) -> Result<Transaction> {
+    let sk_signers = crate::musig2::generate_keys::<2>(); // prover, verifier
+    let pk_signers: Vec<musig2::secp256k1::PublicKey> =
+        sk_signers.iter().map(|key| key.1).collect::<Vec<_>>();
+    let agg_ctx = musig2::KeyAggContext::new(pk_signers.clone())?;
+    let pk_signer: musig2::secp256k1::PublicKey = agg_ctx.aggregated_pubkey();
+
+    let receiver = Address::from_str("tb1qfpfy0hhzpax6xkjz9y0ns6hdj36kp04geatuw0").unwrap().require_network(network)?;
+
+    let y0_preimage = b"some-secret-y0";
+    let y0_hash = sha256::Hash::hash(y0_preimage);
+
+    let csv_n = 1;
+
+    let (phi_eval_tx, phi_tr_address) =  build_phi_eval_presigned_tx(
+        inner_from(&pk_signer),
+        inner_from(&pk_signers[0]),
+        &y0_hash.to_byte_array(),
+        csv_n,
+        input_txid,
+        input_vout,
+        receiver,
+        network,
+    )?;
+
+    let labels = [];
+    let ctlv_value = 10;
+
+    let input_txid = phi_eval_tx.compute_txid();
+    let input_vout = 0;
+
+    let commit_tx = build_input_commit_tx(
+        &labels,
+        inner_from(&pk_signer),
+        inner_from(&pk_signers[0]),
+        ctlv_value,
+        input_txid,
+        input_vout,
+        phi_tr_address,
+        network,
+    )?;
+    
+    todo!()
+}
 
 #[cfg(test)]
 mod tests {
@@ -172,8 +331,8 @@ mod tests {
             ),
         ];
 
-        let (commit_inputs, _) =
-            build_inputs_script(&labels, inner_from(pk_signer), inner_from(sk_signers[1].1));
+        let commit_inputs =
+            build_inputs_script(&labels, inner_from(pk_signer));
         let locking_script = combine_scripts(&[commit_inputs, script! {OP_TRUE}.compile()]);
 
         // Simulate a message to multi-sig
@@ -235,4 +394,5 @@ mod tests {
         println!("stack {:?}", exec_info.final_stack);
         assert!(exec_info.success);
     }
+
 }
